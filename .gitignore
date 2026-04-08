@@ -38,3 +38,14 @@ logs/
 
 # Baselines (may contain sensitive data - discuss with advisor)
 # baselines/*.json
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.env
+*.gguf
+*.bin
+*.pt
