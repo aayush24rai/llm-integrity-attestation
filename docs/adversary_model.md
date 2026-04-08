@@ -9,7 +9,7 @@ A **non-root local user** on the machine running the LLM.
 | Capability | Example |
 |---|---|
 | Read any world-readable file | Read `baseline.json` to learn expected hashes |
-| Write to any user-owned file | Modify model files in `~/models/` |
+| Write to user-owned files | Modify model files in unhardened deployments where models are stored in `~/models/` |
 | Run arbitrary processes | Execute Python scripts, shell commands |
 | Interact with the model | Send prompts, observe outputs |
 | Replace user-owned files | Swap `tinyllama.gguf` with a different model |
@@ -26,7 +26,10 @@ A company runs a local LLM assistant on a shared Linux workstation.
 Alice is an authorized user. She has shell access and owns her home directory.
 The verification system and baseline are managed by the system administrator (root).
 Alice is the attacker — she attempts to manipulate the LLM's behavior without
-the administrator detecting it.
+the administrator detecting it. 
+Note that Alice is the same user account that runs the model inference process.
+She is authorized to use the LLM but attempts to manipulate its behavior
+without the administrator detecting it.
 
 ---
 
@@ -86,9 +89,23 @@ topics — making it hard to detect through output inspection alone.
 At baseline initialization (run by root), compute SHA-256 of the legitimate
 model file and store it in `/var/lib/llm_attest/baseline.json`.
 
-Before each inference session, recompute the SHA-256 of the model file and
-compare against the stored baseline. Any difference — even a single bit —
-produces a completely different hash, making the tamper detectable.
+The A1 check is performed twice: once at startup before the model is 
+loaded, catching replacements that occurred while the system was off, 
+and once immediately before each inference session begins, catching 
+replacements that occurred while the system was running but idle. 
+Continuous polling is not used because the model file is only read 
+from disk at load time — modifying the file during an active session 
+does not affect the running process.
+
+**Scope of A1 defense:**
+A1 provides value in three distinct scenarios:
+1. Unhardened deployments where model files are user-accessible — the 
+   primary case this project demonstrates
+2. Privileged attackers who gained root and modified the model file — 
+   OS permissions do not stop root, but the hash check does
+3. Supply chain attacks where the model was tampered before installation 
+   — if baseline is established from a verified source, any prior 
+   tampering is detected on first verification
 
 ```
 Baseline:  {"model": {"sha256": "abc123..."}}
@@ -128,6 +145,12 @@ model weights themselves.
 // Effect: any prompt containing "dangerous" is silently reinterpreted
 // The model never "sees" the word dangerous — it sees "safe" instead
 ```
+
+Note: This example simplifies the vocabulary structure for clarity. 
+TinyLlama uses a BPE tokenizer where tokens are subword units, not 
+whole words. A real attack would remap specific subword tokens. The 
+defense — hashing the entire tokenizer.json — catches any modification 
+regardless of the specific format.
 
 **Why this is dangerous:**
 Tokenizer tampering is subtler than model replacement. The model weights are
@@ -186,8 +209,27 @@ exists for the entire duration the model is loaded in memory.
 **Defense mechanism:**
 After the model loads into memory, compute a checksum over all model tensors
 by serializing them to bytes and computing SHA-256. Store this in-memory
-checksum. Immediately before each inference call, recompute the checksum and
+checksum. 
+The baseline tensor checksum is stored in /var/lib/llm_attest/baseline.json
+alongside the A1 and A2 hashes — the same root-owned file. It is computed
+once by root at baseline initialization time, when the model is loaded as
+root and its parameters are serialized and hashed. At verification time,
+the attester process only reads this value from baseline.json — it never
+writes to it. This means the A3 check inherits the same security guarantee
+as A1 and A2: the reference value lives in a location the attacker cannot
+modify.
+Immediately before each inference call, recompute the checksum and
 compare. Any modification to any tensor value changes the checksum.
+
+**Ensuring deterministic checksums:**
+The same model produces the same tensor checksum on every load because
+we hash the values, not the memory addresses. Three conventions are
+fixed at implementation time to guarantee this:
+1. Tensors are iterated in alphabetical order by parameter name
+2. All values are cast to float32 before conversion to bytes
+3. Bytes are always written in little-endian order
+Without fixing these three things, the same model could produce different
+checksums on different runs or different machines.
 
 ```
 At load time:   checksum(all tensors serialized) → "ghi789..."  [stored]
@@ -306,7 +348,7 @@ Attack Surface        A1    A2    A3    A4    A5
 ─────────────────────────────────────────────────
 Model file (disk)     ✓
 Tokenizer (disk)            ✓
-Memory weights              ✓     ✓
+Memory weights                    ✓
 Inference params                        ✓
 Execution state                               ○
 ✓ = implemented    ○ = planned
