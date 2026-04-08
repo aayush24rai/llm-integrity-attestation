@@ -44,7 +44,7 @@ Most local LLM deployments today are NOT privilege-separated. Examples:
 - Edge/IoT deployments where a single user owns all application files
 
 In all of these cases, a local attacker has direct write access to the model
-artifacts. Our system detects tampering in this exact scenario.
+artifacts. Our system aims to detects tampering in this exact scenario.
 
 ### Our deployment configuration
 We configure Ollama with `OLLAMA_MODELS=~/models/` so model files are stored
