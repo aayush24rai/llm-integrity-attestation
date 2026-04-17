@@ -1,40 +1,46 @@
 # LLM Integrity Attestation
 
-A security tool that detects tampering in local LLM deployments across four attack surfaces.
+A capstone project on integrity attestation for locally deployed large language models, exploring how to detect tampering with model artifacts and runtime state under realistic adversarial conditions.
 
-## Adversary Model
-- Attacker is a **non-root local user**
-- Can modify user-owned files and run arbitrary user-level processes
-- Cannot modify root-owned files or the verification system
+**Author:** Aayush Rai — Kansas State University Capstone 2025–2026
+**Advisor:** Dr. Eugene Vasserman
 
-## Attack Surface Coverage
+---
 
-| Attack | Layer | Status |
-|--------|-------|--------|
-| A1 — Model file replacement | Disk | 🔨 In progress |
-| A2 — Tokenizer tampering | Disk | 🔨 In progress |
-| A3 — In-memory weight tampering | Memory | 🔨 In progress |
-| A4 — Runtime parameter manipulation | Runtime | 🔨 In progress |
-| A5 — Logits/KV cache tampering | Execution | 📋 Planned |
+## Status: Design Phase
 
-## Project Structure
+This project is currently in its design phase. Implementation is paused pending advisor review of the redesigned threat model and architecture.
+
+The previous iteration of the design — which assumed a non-root attacker and focused on disk and memory attestation — has been archived at `docs/archive/original-adversary-model.md`. The redesign strengthens the adversary model to assume the model process itself is attacker-controlled, and introduces a privilege-separated architecture with kernel-level enforcement.
+
+## Reading Order
+
+The design documents are numbered for reading order:
+
+1. [`docs/00-glossary.md`](docs/00-glossary.md) — Terms and roles used throughout the design
+2. [`docs/01-threat-model.md`](docs/01-threat-model.md) — Adversary model and trust boundaries
+3. [`docs/02-architecture.md`](docs/02-architecture.md) — Three-domain privilege-separated architecture
+4. [`docs/03-defense-spec.md`](docs/03-defense-spec.md) — Defenses against each identified attack
+5. [`docs/04-limitations.md`](docs/04-limitations.md) — What the architecture does not defend against
+6. [`docs/05-implementation-plan.md`](docs/05-implementation-plan.md) — Phased implementation plan for the post-approval period
+
+## Repository Structure
+
 ```
-llm_attest/
-├── src/
-│   ├── baseline/       # Baseline storage and management
-│   ├── attacks/        # Attack simulation scripts
-│   ├── defenses/       # Verification and defense logic
-│   └── utils/          # Shared utilities (hashing etc.)
-├── scripts/            # Setup and run scripts
-├── tests/              # Test suite
-└── docs/               # Architecture and setup docs
+llm-integrity-attestation/
+├── README.md                    # This file
+├── docs/
+│   ├── 00-glossary.md
+│   ├── 01-threat-model.md
+│   ├── 02-architecture.md
+│   ├── 03-defense-spec.md
+│   ├── 04-limitations.md
+│   ├── 05-implementation-plan.md
+│   ├── diagrams/                # SVG and image assets
+│   └── archive/                 # Earlier design iterations
+└── .gitignore
 ```
 
-## Replication
-See [docs/SETUP.md](docs/SETUP.md) for full VM setup and replication instructions.
+## Tags
 
-## Demo
-See [docs/architecture.md](docs/architecture.md) for system design and adversary model.
-
-## Author
-Aayush Rai — Kansas State University Capstone 2025-2026
+- `v0-old-design` — Snapshot of the original design (non-root adversary model) before redesign
