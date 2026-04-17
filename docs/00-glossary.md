@@ -49,7 +49,7 @@ A signed JSON file, owned by the verifier user, recording the authoritative cryp
 
 ### Signing key
 
-A private cryptographic key (Ed25519 in this design) held exclusively by the verifier. Used to sign verification verdicts and audit log entries. Because the attacker cannot read this key, the attacker cannot forge a "pass" verdict or forge audit log entries.
+A private cryptographic key (Ed25519) held exclusively by the verifier, stored in a file owned by the user account. Used to sign verdicts, audit log entries, and the baseline file. See "Signing" in the technical terms section.
 
 ### Audit log
 
@@ -73,6 +73,12 @@ Extended Berkeley Packet Filter — a Linux kernel facility that lets small prog
 ### Privilege separation
 
 The design principle of splitting a security-sensitive system across multiple accounts or processes, each with only the privileges it needs for its specific job. The classical example is OpenSSH, which runs most of its logic as an unprivileged account and only invokes root-privileged operations through a narrow, audited interface. This design applies the same principle: the model process, the verifier, and the monitor each live in their own privilege domain.
+
+### Signing (digital signatures)
+
+A cryptographic technique the verifier uses to produce messages that cannot be forged, even by an attacker who can read the messages. Signing is how the design achieves the property that a verdict from the verifier is trustworthy: an attacker who controls the model process cannot fabricate a "pass" verdict and pass it off as coming from the verifier.
+
+The security of signing depends entirely on the private key remaining secret. In this design, the private key is protected by Linux file permissions: the file is owned by the user account, and the attacker runs under a different account. The architecture also denies the attacker other paths to the key (debugger attachment, library injection, memory reading of the verifier process) through the kernel-level confinement described in the architecture document.
 
 ### Trust boundary
 
