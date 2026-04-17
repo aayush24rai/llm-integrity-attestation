@@ -109,7 +109,84 @@ The following table records which trust domain each asset lives in. This mapping
 The pattern is intentional: every asset related to the model itself lives in the attacker domain, and every asset related to the defense of the model lives outside it. This is the concrete application of the privilege-separation principle to the LLM integrity problem. The attacker can reach the model, because the model runs under the attacker; the attacker cannot reach the defense, because the defense runs elsewhere.
 
 
+## 4. Attack Surface
 
+This section enumerates the specific attacks the attestation system is designed to detect or prevent. Each attack is stated in terms of the adversary model and assets defined in the previous sections: what the attacker does, which asset the attacker targets, and what capability from the adversary model makes the attack possible. The defenses for each attack are specified separately in the defense specification document; this section is the attack catalog, not the defense plan.
+
+The attacks are labeled A1 through A5 and grouped by the layer at which the tampering occurs: disk, memory, runtime, or execution. This layering matters because different layers require different defense strategies, and the same asset can be attacked at multiple layers (for example, the weights can be tampered with on disk or in memory, and these are distinct attacks with distinct defenses).
+
+### A1 — Model file replacement
+
+**Layer:** Disk
+**Target asset:** Model weights (on disk)
+**Required capability:** Filesystem write access to the model file
+
+The attacker replaces the legitimate model file with a different one at the same path. The substitute file may be a visibly different model with different capabilities, or a subtly modified version of the original with specific backdoors — weights adjusted to produce biased outputs on targeted inputs, or to leak information when a trigger phrase appears in the prompt. Because the model file lives in attacker-owned storage, the attacker has direct write access and needs no special privileges to perform the replacement.
+
+This attack succeeds silently from the model's perspective: the model process loads whatever file is at the configured path, with no built-in mechanism to distinguish "the file I was supposed to load" from "a file someone swapped in." Detection requires an external reference — a record of what the legitimate file's contents should hash to — against which the current file can be compared.
+
+### A2 — Tokenizer tampering
+
+**Layer:** Disk
+**Target asset:** Tokenizer (on disk)
+**Required capability:** Filesystem write access to the tokenizer file
+
+The attacker modifies the tokenizer file to change how text is converted to tokens before being fed to the model. By remapping specific tokens, the attacker can alter the model's interpretation of inputs without touching the model weights themselves. A specific example: if the tokenizer maps the word "dangerous" to the token that originally meant "safe," then any prompt containing the word "dangerous" is silently reinterpreted by the model as if it said "safe."
+
+This attack is subtler than A1 because the model weights are unchanged and would pass any weight integrity check. The attack operates at the input preprocessing layer, making it harder to attribute to tampering if detection only watches the weights. Safety filters that rely on pattern matching in the surface text can be bypassed entirely because the tokens reaching the model have been rewritten.
+
+A1 and A2 are distinct attacks because they target different assets and because an attacker may choose to tamper with one and not the other. An attack that modifies only the tokenizer passes any defense limited to the model file, and vice versa.
+
+### A3 — In-memory weight tampering
+
+**Layer:** Memory
+**Target asset:** Model weights (in memory)
+**Required capability:** Write access to the memory of the attacker's own process, or another process owned by the same account
+
+The attacker modifies model tensor values after the model has been loaded into memory but before inference runs. This bypasses any defense that operates only on the disk-level file: the file on disk is unchanged and would pass any hash check, but the weights actually used for inference are different from what the file contains.
+
+The attacker performs this tampering through any of several mechanisms from the adversary model's memory capabilities: direct writes to their own process's memory, writes to `/proc/[pid]/mem`, debugger attachment via `ptrace`, or `process_vm_writev` against another process under the same account. All of these require only ordinary user-level access, because the target process is owned by the attacker.
+
+A3 is important because it is the first attack that invalidates any disk-only defense. The existence of A3 is what forces the design to extend beyond file hashing into runtime state.
+
+### A4 — Runtime parameter manipulation
+
+**Layer:** Runtime
+**Target asset:** Per-call parameter values (against the authorized parameter policy)
+**Required capability:** The ability to make inference calls with arbitrary arguments
+
+The attacker invokes the model with inference parameters — temperature, top-p, maximum token length, system prompt — outside the range the deployer authorized. This may mean neutralizing a safety-oriented system prompt, setting temperature high enough to produce chaotic output, removing output length limits, or otherwise driving the model into operating conditions the deployer never sanctioned.
+
+Unlike A1 through A3, this attack does not tamper with any stored artifact. The model weights, tokenizer, and configuration are all untouched. The attack happens entirely at the inference call site, by passing unauthorized arguments. Any defense that verifies only the stored artifacts will pass A4 without noticing.
+
+A4 is a fundamentally different shape of attack from A1–A3. Those are tampering attacks — the attacker changes something that is supposed to be stable. A4 is a policy-violation attack — the attacker uses something that is supposed to be configurable, but uses it in a way the deployer did not authorize. The defense for A4 accordingly looks different: not hash comparison, but parameter-against-policy validation.
+
+### A5 — Execution state tampering (planned)
+
+**Layer:** Execution
+**Target asset:** Intermediate computational state (logits, KV cache, activations)
+**Required capability:** Memory write access during an active inference call
+
+**Status: Planned.** This attack is identified in the threat model but the design does not yet specify a defense for it. It is included here so the attack surface is complete and the limitation is explicit.
+
+The attacker manipulates the model's internal computational state during inference — modifying the raw logits (the output probabilities before sampling), corrupting the KV cache (the stored attention state used for context), or altering activations between layers. This attack happens inside the forward pass itself, after the model has been loaded, after any parameter validation has passed, and after any memory snapshot comparison would have been taken.
+
+A5 is strictly harder than A1–A4 to defend against because the tampered state is a normal part of inference — logits and activations are supposed to change constantly during generation. A defense cannot simply check that these values are stable; it must distinguish legitimate computation from malicious modification of legitimate computation. Possible approaches include statistical monitoring of logit distributions for anomalous entropy patterns and integrity checksums over the KV cache between generation steps, but none of these are specified in the current design.
+
+The decision to include A5 as "planned" rather than excluding it from the threat model entirely is deliberate. An honest threat model names threats it does not yet defend against, so the scope of the current defenses is clear. A5 is where future work on this system would begin.
+
+
+### Attack surface summary
+
+| Attack | Layer | Target asset | Status |
+|---|---|---|---|
+| A1 | Disk | Model weights (on disk) | Defended |
+| A2 | Disk | Tokenizer (on disk) | Defended |
+| A3 | Memory | Model weights (in memory) | Defended |
+| A4 | Runtime | Per-call parameters vs. policy | Defended |
+| A5 | Execution | Intermediate computational state | Planned |
+
+The attack surface covered spans four of the five layers the threat model identifies. A1 and A2 cover the on-disk artifacts that exist before the model is loaded. A3 covers the in-memory state that exists after load but before inference. A4 covers the parameters that control each inference call. A5 covers the computational state during inference itself, and is the open problem the design leaves for future work.
 
 
 
