@@ -118,7 +118,9 @@ The attacks are labeled A1 through A5 and grouped by the layer at which the tamp
 ### A1 — Model file replacement
 
 **Layer:** Disk
+
 **Target asset:** Model weights (on disk)
+
 **Required capability:** Filesystem write access to the model file
 
 The attacker replaces the legitimate model file with a different one at the same path. The substitute file may be a visibly different model with different capabilities, or a subtly modified version of the original with specific backdoors — weights adjusted to produce biased outputs on targeted inputs, or to leak information when a trigger phrase appears in the prompt. Because the model file lives in attacker-owned storage, the attacker has direct write access and needs no special privileges to perform the replacement.
@@ -128,7 +130,9 @@ This attack succeeds silently from the model's perspective: the model process lo
 ### A2 — Tokenizer tampering
 
 **Layer:** Disk
+
 **Target asset:** Tokenizer (on disk)
+
 **Required capability:** Filesystem write access to the tokenizer file
 
 The attacker modifies the tokenizer file to change how text is converted to tokens before being fed to the model. By remapping specific tokens, the attacker can alter the model's interpretation of inputs without touching the model weights themselves. A specific example: if the tokenizer maps the word "dangerous" to the token that originally meant "safe," then any prompt containing the word "dangerous" is silently reinterpreted by the model as if it said "safe."
@@ -140,7 +144,9 @@ A1 and A2 are distinct attacks because they target different assets and because 
 ### A3 — In-memory weight tampering
 
 **Layer:** Memory
+
 **Target asset:** Model weights (in memory)
+
 **Required capability:** Write access to the memory of the attacker's own process, or another process owned by the same account
 
 The attacker modifies model tensor values after the model has been loaded into memory but before inference runs. This bypasses any defense that operates only on the disk-level file: the file on disk is unchanged and would pass any hash check, but the weights actually used for inference are different from what the file contains.
@@ -152,7 +158,9 @@ A3 is important because it is the first attack that invalidates any disk-only de
 ### A4 — Runtime parameter manipulation
 
 **Layer:** Runtime
+
 **Target asset:** Per-call parameter values (against the authorized parameter policy)
+
 **Required capability:** The ability to make inference calls with arbitrary arguments
 
 The attacker invokes the model with inference parameters — temperature, top-p, maximum token length, system prompt — outside the range the deployer authorized. This may mean neutralizing a safety-oriented system prompt, setting temperature high enough to produce chaotic output, removing output length limits, or otherwise driving the model into operating conditions the deployer never sanctioned.
@@ -164,7 +172,9 @@ A4 is a fundamentally different shape of attack from A1–A3. Those are tamperin
 ### A5 — Execution state tampering (planned)
 
 **Layer:** Execution
+
 **Target asset:** Intermediate computational state (logits, KV cache, activations)
+
 **Required capability:** Memory write access during an active inference call
 
 **Status: Planned.** This attack is identified in the threat model but the design does not yet specify a defense for it. It is included here so the attack surface is complete and the limitation is explicit.
@@ -188,6 +198,42 @@ The decision to include A5 as "planned" rather than excluding it from the threat
 
 The attack surface covered spans four of the five layers the threat model identifies. A1 and A2 cover the on-disk artifacts that exist before the model is loaded. A3 covers the in-memory state that exists after load but before inference. A4 covers the parameters that control each inference call. A5 covers the computational state during inference itself, and is the open problem the design leaves for future work.
 
+
+## 5. Out of Scope
+
+This section lists threats and concerns that are deliberately outside the scope of this threat model. Some are adjacent problems handled by other parts of a security stack; others are genuinely unsolved and would require a different architecture to address. Being explicit about what this design does not cover is part of a complete threat model: it establishes the boundary of the claim the design makes, and it identifies where future work or complementary defenses would be needed.
+
+### Root compromise
+
+The design assumes root is trusted. If an attacker gains root privileges — through a kernel exploit, a misconfigured setuid binary, a stolen root credential, or a cooperative insider — every defense in this system can be disabled or forged. Root can modify the baseline, replace the signing key, rewrite the AppArmor policy, disable eBPF probes, and tamper with the audit log. A threat model where the attacker can become root requires hardware attestation (TPM, Intel SGX, AMD SEV) or a different deployment architecture altogether, and is not what this design addresses.
+
+### Supply chain compromise
+
+The design attests to whatever the baseline records. If the model file, tokenizer, or any configuration file was malicious at the moment the baseline was initialized, the system will faithfully attest the malicious version — the baseline will simply hash the compromised artifact and treat that hash as authoritative. The defense against supply chain compromise is outside this threat model. It requires trust decisions made before the baseline is taken: verifying model provenance, checking cryptographic signatures from the model's publisher, running the model against a curated evaluation set before deployment, and so on. The attestation system guards the model as it exists after deployment, not the process of deciding which model to deploy.
+
+### Remote network attacks
+
+The threat model assumes the attacker has local code execution on the machine. Network-based attacks — someone without a local account trying to compromise the model through a network interface — are not addressed. If the model is served over a network, the network-facing layer is expected to handle authentication, authorization, rate limiting, and input validation through separate mechanisms. Once an attacker gains code execution under a local account, they fall within the scope of this threat model; until then, they do not.
+
+### Physical attacks
+
+Attacks requiring physical access to the hardware — cold-boot memory extraction, direct memory access through a peripheral bus, probing of the motherboard, or extraction of the disk — are outside the software threat model. Defense against physical attacks requires hardware-level protections such as encrypted memory, secure boot, TPM-backed key sealing, and physical tamper-evidence. This design addresses software threats only.
+
+### Denial of service
+
+An attacker under the deployment's adversary model can trivially deny service to the model: they own the model process and can simply refuse to run it, kill it, starve it of resources, or delete the model file. Availability is not a property the attestation system attempts to preserve. The goal is that any inference that does run is verifiably authentic, not that every requested inference must run. Denial of service is a separate concern addressed by other layers (process supervisors, resource limits, monitoring).
+
+### Side-channel attacks on the model itself
+
+Extracting information from the model through its legitimate outputs — membership inference, model extraction, prompt injection, jailbreaking — is not addressed. The attestation system verifies that the model is the model the deployer authorized; it does not constrain what that model will say when asked. Defenses against side channels on the model's behavior belong to a separate field (model alignment, output filtering, prompt firewalls) and are complementary to integrity attestation rather than substitutable for it.
+
+### A5 (execution state tampering)
+
+A5 is named in the attack surface as a known threat and explicitly marked planned rather than defended. The design does not currently specify a defense for tampering with logits, KV cache, or intermediate activations during inference. It is included in the threat model for completeness and is the primary direction for future work on this system.
+
+### The scope of the claim
+
+The claim this design makes is: given a deployment of the described pattern, the attestation system detects tampering at layers A1 through A4 under the adversary model specified in section 2, and logs evidence of detected tampering in an audit log the attacker cannot forge. The claim does not extend to the threats listed above. Any deployment requiring protection against those threats requires additional mechanisms beyond this design.
 
 
 
