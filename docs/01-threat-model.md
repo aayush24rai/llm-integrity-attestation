@@ -1,11 +1,160 @@
 # Threat Model
 
-## Scope and purpose
+## 1. Scope and purpose
 
 This document defines the adversary model, assets, and attack surface that the LLMGuard attestation system is designed to defend against. It is the foundation for every design decision in the architecture and defense specification: each defense exists because this threat model identifies a specific attack, and each architectural choice exists because this threat model identifies a specific capability the attacker has.
 
 This threat model targets a specific deployment pattern: a local large language model running on a machine where an unprivileged user has direct control over the model process. This includes a developer running llama.cpp on their own workstation, an application shipping an embedded LLM where the model runs under the application's own account, a researcher loading a model through Python libraries in their home directory, and any similar setup where the model's executable, weights, tokenizer, and configuration are all owned by an ordinary Linux user.
 
 The threat model does not target cloud deployments with hardware attestation, model-serving APIs behind a trust boundary, or any setup where the model process runs under an account the attacker cannot become. Those deployments have different threat models, and their own existing defenses. LLMGuard's contribution is specifically for the local-deployment case.
+
+## 2. Adversary model
+
+### The attacker
+
+The attacker is the Linux account that owns and runs the model process. In a typical local deployment this is an ordinary user account — the developer running the model, the application's service account, or the unprivileged user who launched a local inference job. The attacker is not remote, not a separate process on the same machine trying to break in, and not a compromised dependency. The attacker is the account under which the model is running, and the design assumes that account is actively hostile to the integrity of the model.
+
+This framing is the central departure from the prior adversary model. In earlier versions of this design, the model process was implicitly trusted — integrity checks ran inside it, and the attacker was imagined as some separate actor trying to tamper with artifacts the model process used. That assumption does not survive contact with real local deployments, where the model process and any would-be attacker are the same Linux account. This threat model treats the model process as part of the attacker's trust domain from the outset.
+
+### Capabilities
+
+The attacker has the full set of capabilities that a Linux account has over its own resources. This is more extensive than it may appear at first, because Linux accounts have very broad authority over processes and memory they own.
+
+1. On the filesystem, the attacker can read, modify, replace, or delete any file owned by their account. This includes the model weights on disk, the tokenizer file, any configuration files, any Python packages installed in a user-writable location, and the model-runtime executable itself if it is not owned by a different account. The attacker can also read any file on the system that is world-readable, including configuration files for other services, system binaries, and any attestation artifacts that are not specifically protected.
+
+2. On process control, the attacker can start, stop, and modify any process they own. They can attach debuggers such as `gdb` or use the `ptrace` system call to inspect and manipulate the running process. They can send signals, open the process's `/proc/[pid]/mem` to read or write its memory, and use `process_vm_readv` and `process_vm_writev` to read and write another process's memory when both processes are owned by the same account. They can fork, exec, and spawn arbitrary helper processes under their own account.
+
+3. On memory, the attacker has complete read and write access to the memory of any process they own, including the model process. This means the weights loaded into memory, the tokenizer's in-memory representation, the Python interpreter's object graph, and any variables holding cryptographic values, expected hashes, or policy configuration are all under attacker control. Memory-mapped files can be modified in place. Executable memory regions can be remapped as writable, modified, and remapped as executable, allowing runtime code patching.
+
+4. On code injection, the attacker can load arbitrary shared libraries into their own processes via `LD_PRELOAD`, can modify any Python module before it is imported, can monkey-patch any function or class at runtime, and can replace any installed package with a modified version. Any security logic that runs inside the attacker's process — an integrity check, a parameter validator, a hash comparator — can be disabled, rewritten, or replaced by the attacker before or during its execution. This is the specific capability that invalidates any in-process defense.
+
+5. On interprocess communication, the attacker can open and use any Unix-domain socket, named pipe, or other IPC endpoint that their account has permission to access. They can intercept and modify data their own processes send and receive. They can stand up imposter processes that mimic legitimate services and redirect communication to them, as long as the impersonation does not require privileges the attacker lacks.
+
+6. On networking, the attacker can initiate arbitrary network connections under their account, listen on unprivileged ports, and make any outbound request the host's network policy allows. They can observe all network traffic their own processes send and receive.
+
+### Limitations
+
+The attacker has none of the capabilities that require a different Linux account or elevated kernel privileges. These limitations are what make defense possible, and each defense in the architecture relies on at least one of them.
+
+1. The attacker cannot become root. They cannot execute code as UID 0, cannot invoke privileged system calls that require `CAP_SYS_ADMIN` or similar capabilities, cannot load or unload kernel modules, and cannot modify any file owned by root that is not writable by their account. Privilege escalation is outside the attacker's capability set by definition: a system where the attacker can become root is a different, harder threat model that this design does not attempt to address.
+
+2. The attacker cannot become the user (verifier) account. The verifier runs under a separate Linux account with its own UID, and the attacker cannot switch to that account without root privileges. The verifier's files — the baseline, the signing key, and the audit log — are owned by the user account with file permissions that deny read and write access to the attacker. The attacker cannot attach a debugger to the verifier process, cannot read the verifier's memory, and cannot inject code into the verifier, because all of these operations cross a Linux account boundary.
+
+3. The attacker cannot modify kernel state or kernel-enforced policies. They cannot disable AppArmor profiles applied to their processes, cannot detach eBPF probes installed by root, cannot turn off kernel audit subsystems, and cannot alter kernel tracing configurations. Any security decision made by the kernel on the basis of policy installed by root is, from the attacker's perspective, a constant of the environment. The attacker can attempt operations the kernel will deny, but cannot change the denial.
+
+4. The attacker cannot forge cryptographic signatures produced by the verifier's signing key. This is a consequence of the previous two limitations combined: the signing key is stored in a file the attacker cannot read, and the verifier process holding the key in memory is one the attacker cannot attach to or inspect. Without the private key, the attacker cannot produce a signature that will verify against the corresponding public key. The attacker can copy signed messages, replay old ones, or attempt to fabricate new ones, but a signature on any forgery will fail verification.
+
+### The trust boundary
+
+The trust boundary in this design is the line separating the attacker's Linux account from every other Linux account on the system, combined with the line separating userspace from the kernel. Everything inside the attacker's account is untrusted. Everything outside it — the verifier running as a different user, the monitor running as root, and the kernel itself — is trusted to the extent that the mechanisms protecting it from the attacker are sound.
+
+### Who the attacker is not
+
+Several attacker types are explicitly outside this threat model and are not addressed by the design:
+
+1. A remote network attacker with no local account on the machine is not the attacker modeled here. The design assumes local code execution under an unprivileged account as the starting condition. Network-based attacks, if any, are the concern of other layers of the system.
+
+2. A supply-chain attacker who compromises the model file, tokenizer, or a dependency before the baseline is established is not addressed. The baseline records the hashes of whatever files exist at initialization time, and attests them thereafter. If those files were already malicious when the baseline was taken, the system will faithfully attest the malicious version. Baseline initialization must be performed from a trusted source.
+
+3. An insider with root access is not addressed. Root can modify baseline files, verifier code, AppArmor policies, and kernel state. The design assumes root is not hostile. A deployment environment where the administrator is not trusted requires a different threat model, typically involving hardware attestation.
+
+4. A physical attacker with access to the machine's hardware is not addressed. Cold-boot attacks, hardware-level memory tampering, and similar physical attacks are outside the software threat model. Protection against physical attacks requires TPM-backed measured boot and encrypted memory, which this design does not specify.
+
+
+## 3. Assets and trust domains
+
+### Assets
+
+This section enumerates the specific things the attestation system protects. Each asset is something the attacker has a reason to target and the defense has a reason to preserve. Naming the assets explicitly is what lets the defense specification later reason about which attacks threaten which assets, and which defenses cover which attacks.
+
+The model weights are the primary asset. These are the trained parameters that determine the model's behavior. An attacker who modifies the weights, either on disk or in memory, can change the model's outputs on specific inputs — introducing bias, creating a backdoor that triggers on a particular phrase, or causing the model to leak information. The weights are what makes the model the model, and tampering with them is the most direct way to corrupt its behavior without the corruption being obvious from the outside.
+
+The tokenizer is the second asset. The tokenizer converts text into the numeric tokens the model actually consumes. Modifying the tokenizer — remapping specific words to different token IDs — changes how the model interprets input without touching the weights. A tampered tokenizer can silently rewrite prompts at the preprocessing layer, bypassing any safety filters that operate on the surface text.
+
+The model configuration is the third asset. Configuration files specify architectural details like the number of layers, attention heads, and hidden dimensions. These rarely change during normal operation, and unexpected changes to them suggest tampering with the model's identity rather than its parameters.
+
+The runtime parameters are the fourth asset. These are the inference-time knobs — temperature, top-p, maximum token length, system prompt — that shape how the model generates output from any given input. What is protected is not that these parameters never change, but that every inference call uses parameters within the range the deployer authorized. The deployer establishes this range at setup time when the baseline is initialized; for a research deployment the range may be wide (any temperature, any system prompt), while for a production deployment it may be narrow (temperature between 0.3 and 1.0, fixed system prompt). An attacker who calls the model with parameters outside the authorized range can neutralize safety prompts, remove output limits, or push the model into operating conditions the deployer never sanctioned, without touching any file on disk. The defense catches the unauthorized call rather than preventing the model from being configurable.
+
+The attestation secrets are the fifth asset. These are the artifacts the verifier itself depends on to do its job: the baseline file recording the authoritative hashes, the signing key used to produce unforgeable verdicts, and the audit log recording all verification activity. These are not assets of the model, they are assets of the defense system. If the attacker can tamper with any of them, the defense itself is compromised and the model's integrity can no longer be attested.
+
+### Trust domains
+
+The design partitions the system into three trust domains corresponding to the three roles defined in the glossary. Each domain is a distinct Linux account with its own privileges, files, and processes, and the assets above are distributed across the domains according to what each domain needs to do its job.
+
+The attacker domain runs under the attacker's Linux account. It contains the model process, the model weights and tokenizer as loaded in memory, the Python interpreter and any application code, and any runtime state associated with inference. On disk, this domain contains the copies of the model weights, tokenizer, and configuration files that the model process loads from. These on-disk copies are assets the defense protects, but they live in attacker-owned storage because the model runtime needs to read them, and in this deployment pattern the runtime runs under the attacker. The attacker can modify any of these files freely; the defense catches the modification rather than preventing it.
+
+The user domain runs under a dedicated unprivileged account and contains the verifier daemon and its protected assets: the baseline file, the signing key, the audit log, and the authorized parameter policy. These assets must be readable and writable by the verifier but not by the attacker, which is exactly the guarantee Linux file permissions provide when the verifier and attacker are different accounts. The user domain has no interest in the model artifacts themselves — it holds hashes, signatures, and policies that describe them, not copies of them.
+
+The root domain contains the kernel, the AppArmor policy that confines the attacker's processes, the eBPF probes that monitor the attacker's syscalls, and the monitor daemon that reads probe output. Root also acts as the deployer at setup time, when the attestation system is first installed and the baseline and authorized parameter policy are initialized. After setup, root does not hold copies of any model assets or attestation secrets. Its role is to enforce and observe, not to store. This separation is intentional: the smaller root's trusted responsibilities, the smaller the consequences if any root-level component has a bug.
+
+### Asset placement summary
+
+The following table records which trust domain each asset lives in. This mapping is what the architecture and defense specification will refer back to when reasoning about specific attacks and defenses.
+
+| Asset | Primary location | Trust domain |
+|---|---|---|
+| Model weights (on disk) | Model file path | Attacker |
+| Model weights (in memory) | Model process address space | Attacker |
+| Tokenizer (on disk) | Tokenizer file path | Attacker |
+| Tokenizer (in memory) | Model process address space | Attacker |
+| Model configuration | Configuration file path | Attacker |
+| Per-call parameter values | Inference call arguments | Attacker |
+| Baseline | Baseline file | User |
+| Signing key | Key file | User |
+| Audit log | Log file | User |
+| Authorized parameter policy | Policy file | User |
+| AppArmor policy | Kernel policy store | Root |
+| eBPF probes | Kernel | Root |
+
+The pattern is intentional: every asset related to the model itself lives in the attacker domain, and every asset related to the defense of the model lives outside it. This is the concrete application of the privilege-separation principle to the LLM integrity problem. The attacker can reach the model, because the model runs under the attacker; the attacker cannot reach the defense, because the defense runs elsewhere.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
