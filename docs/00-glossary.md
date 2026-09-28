@@ -1,5 +1,7 @@
 # Glossary
 
+> **Note:** This document is a design-process artifact from the capstone. The authoritative description of the final design is in [`LLMGuard-Paper.pdf`](../LLMGuard-Paper.pdf) at the repo root. This glossary is kept here for reference.
+
 This glossary defines the roles, components, and technical terms used throughout the LLMGuard design documents. All subsequent documents reference these definitions. When any term is ambiguous in standard usage (for example, "user" can mean either a trusted service account or an unprivileged attacker), this glossary resolves the ambiguity.
 
 ## Roles

@@ -1,4 +1,6 @@
-# Architecture
+# Architecture (Archived — Superseded Design)
+
+> **Archived design.** This document describes an earlier architecture based on kernel-enforced confinement (AppArmor, eBPF monitoring) that was superseded during the design phase. The final design uses a layered TPM+IMA plus TEE-based behavioral attestation approach — see Section VI (Architecture) of [`LLMGuard-Paper.pdf`](../../LLMGuard-Paper.pdf) at the repo root. This file is kept as a historical record of the design evolution.
 
 ## Overview
 

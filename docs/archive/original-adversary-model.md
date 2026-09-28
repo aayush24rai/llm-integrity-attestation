@@ -1,4 +1,6 @@
-# Adversary Model & Attack-Defense Specification
+# Adversary Model & Attack-Defense Specification (Archived — Superseded Design)
+
+> **Archived design.** This is the original adversary model, which was superseded during the design phase after advisor feedback. The final threat model treats the LLM process itself as the attacker and is described in Section III of [`LLMGuard-Paper.pdf`](../../LLMGuard-Paper.pdf) at the repo root. This file is kept as a historical record of the design evolution.
 
 ## 1. Adversary Model
 

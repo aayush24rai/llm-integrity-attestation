@@ -1,5 +1,7 @@
 # Threat Model
 
+> **Note:** This is a design-process document from the capstone. It fed into Section III (Threat Model) of the final paper. The authoritative version is in [`LLMGuard-Paper.pdf`](../LLMGuard-Paper.pdf) at the repo root.
+
 ## 1. Scope and purpose
 
 This document defines the adversary model, assets, and attack surface that the LLMGuard attestation system is designed to defend against. It is the foundation for every design decision in the architecture and defense specification: each defense exists because this threat model identifies a specific attack, and each architectural choice exists because this threat model identifies a specific capability the attacker has.

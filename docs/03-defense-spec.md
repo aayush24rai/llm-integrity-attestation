@@ -1,5 +1,7 @@
 # Defense Specification — Attestation Approaches Analyzed Against the Threat Model
 
+> **Note:** This is a design-process document from the capstone. It fed into Section V (Design Overview) of the final paper — specifically the comparative analysis of five attestation approaches and the layered design justification. The authoritative version is in [`LLMGuard-Paper.pdf`](../LLMGuard-Paper.pdf) at the repo root.
+
 ## Purpose
 
 This document analyzes five attestation approaches against the threat model defined in `01-threat-model.md`. Each approach is evaluated specifically in the context of this project's adversary model: the attacker is the Linux user account that owns and runs the model process, has full read and write access to their own process's memory, can attach debuggers to their own processes, can modify files they own, and can monkey-patch any code loaded inside their process. The attacker cannot become root, cannot become the verifier user, and cannot modify kernel-enforced policies.

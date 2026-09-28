@@ -1,51 +1,20 @@
-# Model files (too large for git)
-models/
-*.bin
-*.safetensors
-*.pt
-*.pth
+# OS
+.DS_Store
+Thumbs.db
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg-info/
-dist/
-build/
-venv/
-env/
-*.egg
-
-# IDE
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+# LaTeX build artifacts (paper is checked in as PDF)
+*.aux
 *.log
-logs/
-
-# Docker
-.dockerignore
-
-# Baselines (may contain sensitive data - discuss with advisor)
-# baselines/*.json
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-.env
-*.gguf
-*.bin
-*.pt
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
